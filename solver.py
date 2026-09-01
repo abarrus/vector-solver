@@ -1,25 +1,23 @@
 import re
 import math
 from functools import reduce
+from abc import ABC, abstractmethod
 
 variables = {}
 
 class VectorError(Exception):
 	pass
 
-def sqrt(radicand, add=0, mul=1):
+def sqrt(radicand, mul=1):
 	isqrt = math.isqrt(radicand)
 	if isqrt**2 == radicand:
 		# no need for sqrt symbol to stay
-		return isqrt*mul + add
+		return isqrt*mul
 	else:
-		return Sqrt(radicand, add, mul)
-
-def is_special(item):
-	return isinstance(item, Sqrt) or isinstance(item, Fraction)
+		return Sqrt(radicand, mul)
 
 def div(a, b):
-	if not isinstance(a, float) and not isinstance(b, float) and not is_special(a) and not is_special(b):
+	if not isinstance(a, float) and not isinstance(b, float) and not isinstance(a, Special) and not isinstance(b, Special):
 		# check if frac needed
 		if a//b * b == a:
 			return a//b
@@ -40,7 +38,60 @@ def can_add(a, b):
 	if isinstance(a, Sqrt) or isinstance(b, Sqrt):
 		return a.radicand == b.radicand
 
-class Expr:
+class Special(ABC):
+	@abstractmethod
+	def as_num(self):
+		pass
+
+	@abstractmethod
+	def __add__(self, other):
+		pass
+
+	@abstractmethod
+	def __sub__(self, other):
+		pass
+
+	@abstractmethod
+	def __mul__(self, other):
+		pass
+
+	@abstractmethod
+	def __truediv__(self, other):
+		pass
+
+	def __radd__(self, other):
+		return self + other
+
+	def __rsub__(self, other):
+		return (self * -1) + other
+
+	def __rmul__(self, other):
+		return self * other
+
+	@abstractmethod
+	def __rtruediv__(self, other):
+		pass
+
+	def compare(self, other, op):
+		v = self.as_num()
+		if isinstance(other, Special):
+			return op(v, other.as_num())
+		else:
+			return op(v, other)
+
+	def __lt__(self, other):
+		return self.compare(other, lambda a,b: a < b)
+	
+	def __le__(self, other):
+		return self.compare(other, lambda a,b: a <= b)
+
+	def __gt__(self, other):
+		return self.compare(other, lambda a,b: a > b)
+	
+	def __ge__(self, other):
+		return self.compare(other, lambda a,b: a >= b)
+
+class Expr(Special):
 	def __init__(self, items):
 		self.items = []
 		self.c = 0
@@ -58,6 +109,9 @@ class Expr:
 					i += 1
 				if not found:
 					self.items.append(item)
+
+	def as_num(self):
+		return c + reduce(lambda a,b: a + (as_num(b) if isinstance(b, Special) else b), self.items, 0)
 
 	def __str__(self):
 		res = ""
@@ -80,19 +134,42 @@ class Expr:
 				res += " - "
 			res += str(item)
 		return res
-		
-						
 
-class Fraction:
+	def __add__(self, other):
+		if isinstance(other, Expr):
+			return Expr([self.c, other.c, *self.items, *other.items])
+		else:
+			return Expr([self.c, *self.items, other])
+
+	def __sub__(self, other):
+		if isinstance(other, Expr):
+			return Expr([self.c, other.c * -1, *self.items, *map(lambda a : a * -1, other.items)])
+		else:
+			return Expr([self.c, *self.items, other * -1])
+
+	def __mul__(self, other):
+		print("todo")
+		return -1
+
+	def __truediv__(self, other):
+		print("todo")
+		return -1
+
+	def __rtruediv__(self, other):
+		print("todo")
+		return -1
+
+class Fraction(Special):
 	def __init__(self, numer, denom):
-		# cancel out anything that can be
-		d = 2
-		half_num = numer // 2
-		while d <= half_num and d <= denom:
-			if numer % d == 0 and denom % d == 0:
-				numer //= d
-				denom //= d
-			d += 1
+		if not isinstance(numer, Special) and not isinstance(denom, Special):
+			# denominator should always be positive by convention
+			if denom < 0:
+				denom *= -1
+				numer *= -1
+
+			common = math.gcd(numer, denom)
+			numer //= common
+			denom //= common
 		self.numer = numer
 		self.denom = denom
 
@@ -147,8 +224,14 @@ class Fraction:
 	def __truediv__(self, other):
 		return self.check(self._mul_div(other, lambda a,b : a / b, True))
 
-class Sqrt:
-	def __init__(self, radicand, add=0, mul=1):
+	def __rtruediv__(self, other):
+		if isinstance(other, Fraction):
+			return Fraction(other.numer * self.denom, other.denom * self.numer)
+		else:
+			return Fraction(other * self.denom, self.numer)
+
+class Sqrt(Special):
+	def __init__(self, radicand, mul=1):
 		# remove perfect squares
 		d = 2
 		while d*d <= radicand:
@@ -159,39 +242,26 @@ class Sqrt:
 				d += 1
 
 		self.radicand = radicand
-		self.add = add
 		self.mul = mul
 
 	def __str__(self):
 		s = ""
-		if self.add != 0:
-			s += str(self.add)
-			if mul < 0:
-				s += " - "
-			else:
-				s += " + "
 		if self.mul != 1:
 			s += str(self.mul)
 		return s + "√(" + str(self.radicand) + ")"
 
 	def as_num(self):
-		return self.add + self.mul * math.sqrt(self.radicand)
+		return self.mul * math.sqrt(self.radicand)
 
 	def _mul_div(self, other, op):
 		if isinstance(other, Sqrt):
-			if self.add == 0 and other.add == 0:
-				# √5 * √3
-				newr = op(self.radicand, other.radicand)
-				newm = op(self.mul, other.mul)
-				return sqrt(newr, 0, newm)
-			else:
-				# foil: (1+√5)(4+√3)
-				# gets too complicated so we are just gonna start returning numbers
-				return op(self.as_num(), other.as_num())
+			# √5 * √3
+			newr = op(self.radicand, other.radicand)
+			newm = op(self.mul, other.mul)
+			return sqrt(newr, newm)
 		c = other
 		newm = op(self.mul, c)
-		newa = op(self.add, c)
-		return sqrt(self.radicand, newa, newm)
+		return sqrt(self.radicand, newm)
 
 	def __mul__(self, other):
 		return self._mul_div(other, lambda a, b: a*b)
@@ -199,40 +269,25 @@ class Sqrt:
 	def __truediv__(self, other):
 		return self._mul_div(other, lambda a, b: div(a,b))
 
-	def _add_sub(self, other, op):
-		if isinstance(other, Sqrt):
-			return op(self.as_num(), other.as_num())
-		c = other
-		return sqrt(self.radicand, op(self.add, c), self.mul)
-
 	def __add__(self, other):
-		return self._add_sub(other, lambda a, b: a+b)
+		return Expr([self, other])
 
 	def __sub__(self, other):
-		return self._add_sub(other, lambda a, b: a-b)
-
-	def __rsub__(self, other):
-		return self.__mul__(-1).__add__(other)
-
-	def __radd__(self, other):
-		return self.__add__(other)
+		return Expr([self, other * -1])
 
 	def __rtruediv__(self, other):
-		return other / self.as_num()
-
-	def __rmul__(self, other):
-		return self.__mul__(other)
+		return Fraction(other, self)
 
 class Vector:
 	def __init__(self, value):
 		self.value = value
 
 	def __str__(self):
-		return str(self.value)
+		return "["+", ".join(map(lambda a : str(a), self.value))+"]"
 
 	# printing inside list / tuple
 	def __repr__(self):
-		return str(self.value)
+		return str(self)
 
 	def _add_sub(self, other, lmd):
 		if not isVector(other):
@@ -299,7 +354,6 @@ class Vector:
 		return self.norm()
 
 	def unit_vector(self):
-		print(self, self.norm())
 		return self.__truediv__(self.norm())
 			
 
@@ -322,9 +376,58 @@ def parse_command(cmd):
 		if c == "h":
 			print_help()
 			continue
+		if len(c) > 0 and c[0] == "~":
+			#arbitrary symbol i decided means you can type functions
+			print(parse_func(c[1:]))
+			continue
 		if set_var(c):
 			continue
 		print(solve_all(c))
+
+def angle_between(a, b):
+	if not isinstance(a, Vector) or not isinstance(b, Vector):
+		print("Both arguments to angle() must be vectors.")
+		return None
+	return "arccos("+str((a*b)/(abs(a)*abs(b)))+")"
+
+def proj(a, b):
+	print("Projection of "+str(a)+" onto "+str(b))
+	if not isinstance(a, Vector) or not isinstance(b, Vector):
+		print("Both arguments to proj() must be vectors.")
+		return None
+	return b*(div((a*b),(abs(b)*abs(b))))
+
+# idk I just decided that you would write for example angle(a~b) to get angle between a and b. tilde instead of comma bc idk i picked a character that was unused. comma is used in separators for vectors sooo
+def parse_func(f):
+	match = re.search(r"^([a-z]+)\((.*)\)$", f)
+	if not match:
+		print("Malformed function")
+		return None
+	args = match.groups()[1].split("~")
+	solved_args = []
+	for arg in args:
+		parsed = parse_exp(arg)["match"]
+		if parsed == None:
+			return None
+		solved = solve(parsed)
+		if solved == None:
+			return None
+		solved_args.append(solved)
+
+	f_name = match.groups()[0]
+
+	match f_name:
+		case "angle":
+			if len(solved_args) != 2:
+				print(len(solved_args) + " args given when 2 expected.")
+			return angle_between(*solved_args)
+		case "proj":
+			if len(solved_args) != 2:
+				print(len(solved_args) + " args given when 2 expected.")
+			return proj(*solved_args)
+
+	print("Unknown function name: "+f_name)
+	return None
 
 def solve_all(cmd):
 	im = implicit_mult(cmd)
@@ -558,9 +661,14 @@ def print_help():
 	print("[2, 4, 6]")
 	print(">> 2a * b")
 	print("64")
+	print("---- END EXAMPLE ----")
 	print("use |a| to get norm of vector a")
 	print("use ^a to get unit vector of vector a")
 	print("note: absolute value in absolute value is broken. e.g. no |1-(a+|-9|)|")
-	print("---- END EXAMPLE ----")
+	print("Special functions:")
+	print(">> ~angle(a~b)")
+	print("angle between vectors a and b")
+	print(">> ~proj(a~b)")
+	print("projection of vector a onto vector b")
 
 main()
