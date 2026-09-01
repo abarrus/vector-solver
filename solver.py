@@ -19,7 +19,6 @@ def is_special(item):
 	return isinstance(item, Sqrt) or isinstance(item, Fraction)
 
 def div(a, b):
-	print("div",a,b)
 	if not isinstance(a, float) and not isinstance(b, float) and not is_special(a) and not is_special(b):
 		# check if frac needed
 		if a//b * b == a:
@@ -219,10 +218,7 @@ class Sqrt:
 		return self.__add__(other)
 
 	def __rtruediv__(self, other):
-		if self.add != 0 or not isinstance(other, :
-			return other / self.as_num()
-		else:
-			new_m = div(other, 
+		return other / self.as_num()
 
 	def __rmul__(self, other):
 		return self.__mul__(other)
