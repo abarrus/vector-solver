@@ -36,6 +36,8 @@ def can_add(a, b):
 	if isinstance(a, Vector) or isinstance(b, Vector):
 		return isinstance(a, Vector) and isinstance(b, Vector)
 	if isinstance(a, Sqrt) or isinstance(b, Sqrt):
+		if not isinstance(a, Sqrt) or not isinstance(b, Sqrt):
+			return False
 		return a.radicand == b.radicand
 
 class Special(ABC):
@@ -53,6 +55,10 @@ class Special(ABC):
 
 	@abstractmethod
 	def __mul__(self, other):
+		pass
+
+	@abstractmethod
+	def factors(self):
 		pass
 
 	@abstractmethod
@@ -91,6 +97,49 @@ class Special(ABC):
 	def __ge__(self, other):
 		return self.compare(other, lambda a,b: a >= b)
 
+def factors(n):
+	if isinstance(n, Special):
+		return n.factors()
+	if not isinstance(n, int):
+		return []
+	f = []
+	i = 2
+	while i <= n//2:
+		if n % i == 0:
+			f.append(i)
+			n //= i
+		else:
+			i += 1
+	f.append(i)
+	return f
+
+def factor_dict_to_obj(factors):
+	res = {}
+	for f in factors:
+		if f in res:
+			res[f] += 1
+		else:
+			res[f] = 1
+	return res
+
+
+def factor_dict_to_list(factors):
+	res = []
+	for f, repeats in factors:
+		for i in range(repeats):
+			res.append(f)
+	return res
+
+# give args in this format: { factor: count, factor: count }
+# returns in same format
+def factors_intersection(obj1, obj2):
+	res = {}
+	for factor, repeats in obj1:
+		if factor not in obj2:
+			continue
+		res[factor] = min(repeats, obj2[factor])
+	return res
+
 class Expr(Special):
 	def __init__(self, items):
 		self.items = []
@@ -110,8 +159,24 @@ class Expr(Special):
 				if not found:
 					self.items.append(item)
 
+	def factors(self):
+		# { factor: count, factor: count }
+		f = {}
+		start_i = 0
+		if self.c != 0:
+			f = factor_list_to_dict(factors(self.c))
+		else:
+			if len(self.items) > 0:
+				start_i = 1
+				f = factor_list_to_dict(factors(self.items[0]))
+			else:
+				return []
+		for item in self.items[start_i:]:
+			f = factors_intersection(f, factor_list_to_dict(factors(item)))
+		return factor_dict_to_list(f)
+
 	def as_num(self):
-		return c + reduce(lambda a,b: a + (as_num(b) if isinstance(b, Special) else b), self.items, 0)
+		return c + reduce(lambda a,b: a + (b.as_num() if isinstance(b, Special) else b), self.items, 0)
 
 	def __str__(self):
 		res = ""
@@ -173,6 +238,9 @@ class Fraction(Special):
 		self.numer = numer
 		self.denom = denom
 
+	def factors(self):
+		return factors(self.numer)
+
 	def as_num(self):
 		n = self.numer
 		d = self.denom
@@ -187,9 +255,15 @@ class Fraction(Special):
 
 	def _add_sub(self, other, op):
 		if isinstance(other, float):
-			return op(self.as_num(), other())
+			return op(self.as_num(), other)
 		if isinstance(other, int):
 			return Fraction(op(self.numer, other * self.denom), self.denom)
+		if isinstance(other, Fraction):
+			if self.denom == other.denom:
+				return Fraction(op(self.numer, other.numer), self.denom)
+			else:
+				print("todo")
+				return None
 
 	def __add__(self, other):
 		return self.check(self._add_sub(other, lambda a,b : a + b))
@@ -253,6 +327,9 @@ class Sqrt(Special):
 	def as_num(self):
 		return self.mul * math.sqrt(self.radicand)
 
+	def factors(self):
+		return factors(self.mul)
+
 	def _mul_div(self, other, op):
 		if isinstance(other, Sqrt):
 			# √5 * √3
@@ -295,7 +372,6 @@ class Vector:
 		v1, v2 = self.value, other.value
 		if len(v1) != len(v2):
 			raise VectorError("Can't add/subtract vectors of different dimensions. Result is undefined.")
-			return None
 		new_v = list(map(lmd, v1, v2))
 		return Vector(new_v)
 
@@ -313,7 +389,6 @@ class Vector:
 			v1, v2 = self.value, other.value
 			if len(v1) != len(v2):
 				raise VectorError("Can't multiply vectors of different dimensions. Result is undefined.")
-				return None
 			return reduce(lambda a, b : a+b, list(map(lambda a,b : a*b, v1, v2)))
 		else:
 			# multiply by scalar
@@ -324,7 +399,6 @@ class Vector:
 	def __truediv__(self, other):
 		if isVector(other):
 			raise VectorError("Cannot divide a vector by another vector.")
-			return None
 		else:
 			# divide by scalar
 			c = other
@@ -336,19 +410,16 @@ class Vector:
 
 	def __rtruediv__(self, other):
 		raise VectorError("Cannot divide a scalar by a vector")
-		return None
 
 	def __radd__(self, other):
 		raise VectorError("Can't add scalar and vector")
-		return None		
 
 	def __rsub__(self, other):
 		raise VectorError("Can't subtract vector from scalar")
-		return None
 
 	# get norm (aka length) of vector
 	def norm(self):
-		return sqrt(sum(x**2 for x in self.value))
+		return sqrt(sum(x*x for x in self.value))
 
 	def __abs__(self):
 		return self.norm()
@@ -432,6 +503,7 @@ def parse_func(f):
 def solve_all(cmd):
 	im = implicit_mult(cmd)
 	parsed = parse_exp(im)
+	print("parsed", parsed)
 	if parsed == None:
 		return None
 	try:
@@ -441,7 +513,7 @@ def solve_all(cmd):
 
 def implicit_mult(cmd):
 	# num/var before bracket/paren/other var. e.g. 2(5+1) or a[9,2] or abc
-	cmd = re.sub(r"([\da-zA-Z])(?=[\[\(a-zA-Z])", r"\1*", cmd)
+	cmd = re.sub(r"([\da-zA-Z])(?=[\[√\(a-zA-Z])", r"\1*", cmd)
 
 	# num/var/bracket/paren after closing bracket/paren. e.g. (1+2)a or (1+2)(3+4)
 	cmd = re.sub(r"([\]\)])([\da-zA-Z\(\[])", r"\1*\2", cmd)
@@ -502,7 +574,7 @@ def set_var(cmd):
 
 	val = solve(parse_exp(exp))
 	if val != None:
-		variables[letter] = val["match"]
+		variables[letter] = val
 
 	return 1
 
@@ -510,10 +582,10 @@ def set_var(cmd):
 # e.g. for [3,2], give it "3,2"
 # returns vector as a list, OR -1 if invalid format
 def parse_vector(vector):
-	if not re.search(r"^(-?\d+,)*-?\d+,?$", vector):
-		print("Invalid vector.\nUse this format:\n[-4, -2, -4]")
-		return None
-	v = list(map(lambda a : int(a), vector.split(",")))
+	#if not re.search(r"^(-?\d+,)*-?\d+,?$", vector):
+	#	print("Invalid vector.\nUse this format:\n[-4, -2, -4]")
+	#	return None
+	v = list(map(lambda a : solve_all(a), vector.split(",")))
 	return Vector(v)
 
 def parse_exp(cmd):
@@ -624,7 +696,7 @@ def parse_factor(arg):
 			}
 		
 		else:
-			parsed = parse_arg(arg[1:])
+			parsed = parse_factor(arg[1:])
 			if parsed == None:
 				return None
 			return {
